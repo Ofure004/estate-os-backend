@@ -1,0 +1,346 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum OrganizationRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+}
+
+model User {
+  id        String  @id @default(cuid())
+  email     String  @unique
+  firstName String?
+  lastName  String?
+  phone     String?
+
+  memberships      OrganizationMembership[]
+  residencies      Residency[]
+  staffAssignments StaffAssignment[]
+
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  visitorInvitations VisitorInvitation[]
+  accessEvents       AccessEvent[]
+}
+
+model Organization {
+  id   String @id @default(cuid())
+  name String
+  slug String @unique
+
+  memberships OrganizationMembership[]
+  clusters    Cluster[]
+  estates     Estate[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model OrganizationMembership {
+  id String @id @default(cuid())
+
+  userId         String
+  organizationId String
+
+  role   OrganizationRole @default(MEMBER)
+  status MembershipStatus @default(ACTIVE)
+  user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+model Cluster {
+  id String @id @default(cuid())
+
+  organizationId String
+
+  name String
+  slug String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  estates Estate[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+}
+
+model Estate {
+  id String @id @default(cuid())
+
+  organizationId String
+  clusterId      String?
+
+  name String
+  slug String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  cluster Cluster? @relation(fields: [clusterId], references: [id], onDelete: SetNull)
+
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  units              Unit[]
+  staffAssignments   StaffAssignment[]
+  gates              Gate[]
+  visitorInvitations VisitorInvitation[]
+  accessEvents       AccessEvent[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+  @@index([clusterId])
+}
+
+model Residency {
+  id     String @id @default(cuid())
+  userId String
+  unitId String
+
+  type   ResidencyType
+  status ResidencyStatus @default(ACTIVE)
+
+  startedAt DateTime?
+  endedAt   DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  unit Unit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  visitorInvitations VisitorInvitation[]
+
+  @@index([userId])
+  @@index([unitId])
+  @@index([status])
+}
+
+enum ResidencyType {
+  OWNER
+  TENANT
+  OCCUPANT
+  DEPENDENT
+}
+
+enum ResidencyStatus {
+  PENDING
+  ACTIVE
+  ENDED
+}
+
+model Unit {
+  id       String @id @default(cuid())
+  estateId String
+
+  name   String
+  code   String
+  type   UnitType?
+  status UnitStatus @default(ACTIVE)
+
+  estate      Estate      @relation(fields: [estateId], references: [id], onDelete: Cascade)
+  residencies Residency[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([estateId, code])
+  @@index([estateId])
+}
+
+enum UnitType {
+  FLAT
+  HOUSE
+  VILLA
+  DUPLEX
+  APARTMENT
+  OTHER
+}
+
+enum UnitStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model StaffAssignment {
+  id       String @id @default(cuid())
+  userId   String
+  estateId String
+
+  role   StaffRole
+  status StaffAssignmentStatus @default(ACTIVE)
+
+  startedAt DateTime?
+  endedAt   DateTime?
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  estate Estate @relation(fields: [estateId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([estateId])
+  @@index([role])
+  @@index([status])
+}
+
+enum StaffRole {
+  ESTATE_MANAGER
+  FACILITY_MANAGER
+  SECURITY_SUPERVISOR
+  GUARD
+}
+
+enum StaffAssignmentStatus {
+  ACTIVE
+  SUSPENDED
+  ENDED
+}
+
+model Gate {
+  id       String @id @default(cuid())
+  estateId String
+
+  name   String
+  code   String
+  status GateStatus @default(ACTIVE)
+
+  estate Estate @relation(fields: [estateId], references: [id], onDelete: Cascade)
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  accessEvents AccessEvent[]
+
+  @@unique([estateId, code])
+  @@index([estateId])
+}
+
+enum GateStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model VisitorInvitation {
+  id              String @id @default(cuid())
+  estateId        String
+  hostResidencyId String
+  createdByUserId String
+
+  visitorFirstName String
+  visitorLastName  String
+  visitorPhone     String?
+  visitorEmail     String?
+
+  purpose    String?
+  validFrom  DateTime
+  validUntil DateTime
+
+  status VisitorInvitationStatus @default(PENDING)
+
+  estate        Estate    @relation(fields: [estateId], references: [id])
+  hostResidency Residency @relation(fields: [hostResidencyId], references: [id])
+  createdBy     User      @relation(fields: [createdByUserId], references: [id])
+
+  pass AccessPass?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([estateId])
+  @@index([hostResidencyId])
+  @@index([createdByUserId])
+  @@index([status])
+}
+
+enum VisitorInvitationStatus {
+  PENDING
+  ACTIVE
+  CANCELLED
+  COMPLETED
+  EXPIRED
+}
+
+model AccessPass {
+  id           String @id @default(cuid())
+  invitationId String @unique
+
+  code String @unique
+
+  status AccessPassStatus @default(ACTIVE)
+
+  validFrom  DateTime
+  validUntil DateTime
+
+  revokedAt DateTime?
+
+  invitation VisitorInvitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+
+  events AccessEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+enum AccessPassStatus {
+  ACTIVE
+  REVOKED
+  USED
+}
+
+model AccessEvent {
+  id String @id @default(cuid())
+
+  passId   String
+  gateId   String
+  actorId  String
+  estateId String
+
+  type AccessEventType
+
+  pass   AccessPass @relation(fields: [passId], references: [id])
+  gate   Gate       @relation(fields: [gateId], references: [id])
+  actor  User       @relation(fields: [actorId], references: [id])
+  estate Estate     @relation(fields: [estateId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([estateId, createdAt])
+  @@index([passId])
+  @@index([gateId])
+  @@index([actorId])
+  @@index([createdAt])
+}
+
+enum AccessEventType {
+  CHECK_IN
+  CHECK_OUT
+  DENIED
+}
