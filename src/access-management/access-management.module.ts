@@ -1,3 +1,5 @@
+import { GatesController } from './gates.controller.js';
+import { StaffVisitorsService } from './staff-visitors.service.js';
 import { AccessVisibilityService } from './access-visibility.service.js';
 import { AccessVisibilityController } from './access-visibility.controller.js';
 import { AccessVisitService } from './access-visit.service.js';
@@ -11,11 +13,13 @@ import { AccessVerificationService } from './access-verification.service.js';
 @Module({
   imports: [PrismaModule, AuthorizationModule, AccessPassModule],
   controllers: [
+    GatesController,
     AccessVerificationController,
     AccessVisitController,
     AccessVisibilityController,
   ],
   providers: [
+    StaffVisitorsService,
     AccessVerificationService,
     AccessVisitService,
     AccessVisibilityService,

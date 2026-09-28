@@ -7,5 +7,6 @@ async function bootstrap() {
   });
   app.enableShutdownHooks();
   await app.listen(process.env.PORT ?? 3000);
+  console.log(`Server listening at ${await app.getUrl()}`);
 }
 await bootstrap();

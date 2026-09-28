@@ -25,6 +25,27 @@ export class UsersService {
       select: { ...publicUserSelect, passwordHash: true },
     });
   }
+  findContextById(id: string) {
+    const estate = { id: true, name: true, organizationId: true } as const;
+    return this.prisma.user.findUnique({
+      where: { id },
+      select: {
+        ...publicUserSelect,
+        memberships: { select: {
+          id: true, role: true, status: true,
+          organization: { select: { id: true, name: true } },
+        } },
+        residencies: { select: {
+          id: true, status: true, startedAt: true, endedAt: true,
+          unit: { select: { id: true, name: true, code: true, estate: { select: estate } } },
+        } },
+        staffAssignments: { select: {
+          id: true, role: true, status: true, startedAt: true, endedAt: true,
+          estate: { select: estate },
+        } },
+      },
+    });
+  }
   findById(id: string) {
     return this.prisma.user.findUnique({
       where: { id },

@@ -12,6 +12,8 @@ import { Authorize } from '../authorization/authorize.decorator.js';
 import type { AuthorizedRequest } from '../authorization/authorization.types.js';
 import { AccessVisibilityService } from './access-visibility.service.js';
 import { AccessActivityQueryDto } from './dto/access-activity-query.dto.js';
+import { StaffVisitorsQueryDto } from './dto/staff-visitors-query.dto.js';
+import { StaffVisitorsService } from './staff-visitors.service.js';
 @Controller('estates/:estateId/access')
 @Authorize({
   scope: 'estate',
@@ -21,7 +23,26 @@ export class AccessVisibilityController {
   constructor(
     @Inject(AccessVisibilityService)
     private readonly visibility: AccessVisibilityService,
+    @Inject(StaffVisitorsService)
+    private readonly visitors: StaffVisitorsService,
   ) {}
+  @Get('visitors')
+  @Header('Cache-Control', 'no-store')
+  staffVisitors(
+    @Req() request: AuthorizedRequest,
+    @Param('estateId') estateId: string,
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        expectedType: StaffVisitorsQueryDto,
+      }),
+    )
+    query: StaffVisitorsQueryDto,
+  ) {
+    return this.visitors.find(request.user.id, estateId, query);
+  }
   @Get('onsite')
   @Header('Cache-Control', 'no-store')
   onsite(

@@ -12,7 +12,8 @@ INSERT INTO "User" ("id", "email", "passwordHash", "firstName", "lastName", "pho
 VALUES
   ('seed_user_owner', 'owner@example.com', '$argon2id$v=19$m=65536,p=4,t=3$WW+uiuQ52LdITewhxVpyQA$/7dyBR4Q375QhFftqvAXvVZ0+hBgHiQIEcDJ9EOdCII', 'Ada', 'Okafor', '+2348000000001', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('seed_user_manager', 'manager@example.com', '$argon2id$v=19$m=65536,p=4,t=3$w35s4FN+I2Hr0styiU/7zg$00qdDwzM+ZRD0qWtGAVPrb/DlE4KvtadljUD5y24qcs', 'Tunde', 'Adebayo', '+2348000000002', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('seed_user_tenant', 'tenant@example.com', '$argon2id$v=19$m=65536,p=4,t=3$qLcbln3Vw68W4p9flhbfew$ee/10ReeMRUiZFSOZvA+XS0qVqYtcF2qXq+n0nwgzc8', 'Amaka', 'Eze', '+2348000000003', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  ('seed_user_tenant', 'tenant@example.com', '$argon2id$v=19$m=65536,p=4,t=3$qLcbln3Vw68W4p9flhbfew$ee/10ReeMRUiZFSOZvA+XS0qVqYtcF2qXq+n0nwgzc8', 'Amaka', 'Eze', '+2348000000003', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('seed_user_guard', 'guard@example.com', '$argon2id$v=19$m=65536,p=4,t=3$24MpRx3LNk06Ee/JtrzfiA$iTMA60DvUT2aRwGjCfjIuADNg9jRPR3O1r+RLJxVskc', 'Chidi', 'Obi', '+2348000000004', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT ("id") DO UPDATE SET
   "email" = EXCLUDED."email",
   "passwordHash" = EXCLUDED."passwordHash",
@@ -88,6 +89,8 @@ INSERT INTO "StaffAssignment" (
 )
 VALUES (
   'seed_staff_manager', 'seed_user_manager', 'seed_estate_palm_view', 'ESTATE_MANAGER', 'ACTIVE', '2026-01-01', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+), (
+  'seed_staff_guard', 'seed_user_guard', 'seed_estate_palm_view', 'GUARD', 'ACTIVE', '2026-01-01', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 )
 ON CONFLICT ("id") DO UPDATE SET
   "role" = EXCLUDED."role",

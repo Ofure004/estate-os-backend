@@ -53,6 +53,14 @@ export class AccessVisibilityService {
       },
     );
   }
+  async findGates(currentUserId: string, estateId: string) {
+    await this.authorize(currentUserId, estateId);
+    return this.prisma.gate.findMany({
+      where: { estateId },
+      select: { id: true, name: true, code: true, status: true },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    });
+  }
   private scope(estateId: string): Prisma.AccessEventWhereInput {
     return {
       estateId,

@@ -126,8 +126,9 @@ npm run db:seed
 npm run start:dev
 ```
 
-The development seed provides `owner@example.com`, `manager@example.com`, and
-`tenant@example.com`, each with password `EstateDemo123!`. Each account has a
+The development seed provides `owner@example.com`, `manager@example.com`,
+`tenant@example.com`, and `guard@example.com`, each with password `EstateDemo123!`.
+The guard is assigned to Palm View Estate and can verify passes, check visitors in, and check visitors out. Each account has a
 separate salted Argon2id hash. Rerunning the seed resets these demo passwords.
 Existing users with no password hash cannot log in.
 
@@ -140,10 +141,48 @@ curl http://localhost:3000/auth/me \
   -H 'Authorization: Bearer <accessToken>'
 ```
 
-Login returns `{ accessToken, expiresIn: 900, user }`. Tokens use HS256 and
+Login returns `{ accessToken, expiresIn: 900, refreshToken, refreshExpiresAt, user }`. Access tokens use HS256 and
 expire after 15 minutes. Email is trimmed and lowercased; passwords are preserved
 exactly. Invalid input returns 400; invalid credentials return the same 401 error
 whether the email exists or not.
+
+Refresh sessions last 30 days from login (an absolute expiry, not extended by activity).
+Only SHA-256 hashes of the random refresh tokens are stored in PostgreSQL.
+Apply the migration before starting the updated backend:
+
+```bash
+npx prisma migrate deploy --config prisma7.config.ts
+npx prisma generate --config prisma7.config.ts
+```
+
+`POST /auth/refresh` accepts `{ "refreshToken": "<current refresh token>" }`
+without an access token and returns the same shape as login. Each successful
+refresh replaces the refresh token; the previous token immediately stops working.
+Expired, unknown, already-used tokens and deleted users return 401. Invalid bodies
+return 400. `POST /auth/logout` accepts the same body and returns 204, revoking
+that refresh session. Already-issued access tokens remain valid for up to 15 minutes.
+Logging out one session does not log out other devices.
+
+Frontend integration:
+
+1. Save the login response's tokens and expiry. For browser apps, prefer keeping
+   refresh tokens in a server-side frontend session behind a Secure, HttpOnly cookie;
+   this API returns tokens in JSON and does not set cookies itself. Avoid putting
+   refresh tokens in URLs, logs, or browser localStorage.
+2. Before access-token expiry, or after a protected API returns 401, call
+   `/auth/refresh` with the current refresh token. Store both replacement tokens
+   together, then retry the original request once with the new access token.
+3. Share one in-flight refresh operation between requests (and coordinate tabs
+   if they share tokens). Concurrent refreshes with the same token have one winner;
+   other requests receive 401. Do not retry refresh requests with an already-used token.
+4. If refresh returns 401, clear the session and show login. Network errors and
+   server errors should show a retry state rather than immediately logging out.
+5. On logout, send the latest refresh token to `/auth/logout` and clear local
+   authentication state. Existing sessions must log in once to obtain a refresh token.
+
+The frontend must implement this flow; updating the backend alone cannot renew
+tokens in an existing frontend. All token responses use `Cache-Control: no-store`.
+Expired session records may be periodically deleted with an `expiresAt < now()` cleanup.
 
 The guard verifies the bearer token and loads the current user from PostgreSQL
 into typed `request.user`. `/auth/me` returns `id`, `email`, `firstName`,
@@ -152,8 +191,73 @@ and memberships are not included in the token or profile response.
 
 Run `npm test` and `npm run test:e2e`. The HTTP suite uses real password hashing
 and JWT signing with a mocked Prisma service, so it does not need a database.
+An optional PostgreSQL concurrency test creates and cleans up a temporary user:
+`RUN_AUTH_DATABASE_TESTS=1 npm run test:e2e -- test/auth-database.e2e-spec.ts`.
+Run it only against a development/test database with the migrations applied.
 
 ## Authorization and scope
+
+### Staff visitor list
+
+`GET /estates/:estateId/access/visitors?status=expected&page=1&limit=20`
+
+Requires a bearer access token and an active `GUARD`, `SECURITY_SUPERVISOR`, or
+`ESTATE_MANAGER` assignment in the requested estate. Organization owner/admin
+membership or residency alone does not grant access. This endpoint is read-only.
+Check-in/out remains restricted to guards and security supervisors.
+
+`status` is optional and accepts `expected`, `onsite`, or `departed`; omit it for
+all three groups. Pagination defaults to page 1, limit 20, with a maximum limit
+of 100. Results are ordered by invitation creation time descending, then invitation
+ID descending. `meta.total` is the count for the selected filter, not all statuses.
+Unknown parameters and invalid filters/pagination return 400. Missing authentication
+returns 401; insufficient estate access returns 403. Empty/out-of-range pages return
+200 with an empty `data` array. Responses have `Cache-Control: no-store`.
+
+```json
+{
+  "data": [{
+    "invitationId": "invitation-id",
+    "visitor": { "firstName": "Chidi", "lastName": "Nwosu" },
+    "hostUnit": { "id": "unit-id", "name": "Block C4", "code": "C4" },
+    "purpose": "Plumbing repair",
+    "validFrom": "2026-09-21T13:00:00.000Z",
+    "validUntil": "2026-09-21T18:00:00.000Z",
+    "status": "expected",
+    "checkedInAt": null,
+    "checkedOutAt": null
+  }],
+  "meta": { "page": 1, "limit": 20, "total": 1, "totalPages": 1 }
+}
+```
+
+- **Expected:** no CHECK_IN/CHECK_OUT history, with an unexpired PENDING/ACTIVE
+  invitation and an ACTIVE, unrevoked pass with a valid overlapping entry window.
+  Future windows are included. Invitations without passes are excluded.
+- **On-site:** latest movement is CHECK_IN, even if the invitation/pass subsequently
+  expires or is cancelled/revoked. `checkedInAt` is the latest check-in timestamp.
+- **Departed:** latest movement is CHECK_OUT; both movement timestamps are supplied
+  when present. Historical re-entry switches the visitor back to on-site.
+
+DENIED events do not change presence. Timestamp ties use event ID descending.
+Invalid estate/unit/gate relationships are excluded. Cancelled or expired visitors
+who never arrived are not part of these three operational groups. Departed results
+include all recorded history; there is no implicit “today” filter.
+
+No pass codes/tokens, resident names/contact details, or visitor phone numbers are
+returned. Display “Valid from” rather than ETA, and use purpose instead of a visitor
+category (categories are not implemented). Dates are UTC ISO strings; format them
+for the estate's timezone in the frontend.
+
+Check-in/out buttons must open the existing scan/code-entry flow with a selected
+gate. `invitationId` is not a check-in credential. Inspect `success` in the action
+response, then refetch the list; poll for actions performed by other staff. This
+list uses lowercase operational `status`; resident invitation endpoints separately
+return lifecycle `status` and uppercase `visitStatus`.
+
+Tests: `npm run test:e2e -- test/access-visibility.e2e-spec.ts`.
+Optional PostgreSQL checks (development database with seeded demo users only):
+`ACCESS_PASS_DATABASE_TEST=1 npm run test:e2e -- test/access-visibility.database.e2e-spec.ts`.
 
 Import `AuthorizationModule` in a feature module and apply `@Authorize` to its
 controllers or handlers. The decorator runs JWT authentication before scope and
@@ -390,6 +494,15 @@ Check-in re-evaluates entry validity from current records, then appends CHECK_IN
 It leaves pass and invitation status unchanged. Presence comes from the latest
 CHECK_IN/CHECK_OUT event for the pass, excluding DENIED events. A currently
 inside visitor returns ALREADY_CHECKED_IN without another event.
+
+Resident invitation create/list/detail/cancel responses also expose `visitStatus`,
+`checkedInAt`, and `checkedOutAt`. `visitStatus` is `NOT_ARRIVED`, `CHECKED_IN`, or
+`CHECKED_OUT`, derived from the latest CHECK_IN/CHECK_OUT events; DENIED events do
+not change presence. Timestamps are ISO strings or null. These fields are separate
+from invitation `status`: an expired or cancelled invitation can still have a
+visitor checked in. Existing visits are reflected immediately without a migration.
+Use `visitStatus` for the frontend's “Checked in” badge, and refetch the invitation
+list/detail after a gate action (or poll while displaying live arrivals).
 
 Check-out requires an open check-in, not current entry validity. It permits
 recording departure after expiry, revocation, cancellation, or an unexpectedly

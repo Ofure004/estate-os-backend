@@ -15,6 +15,34 @@ import {
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuthorizationService } from '../authorization/authorization.service.js';
 import type { CreateVisitorInvitationDto } from './dto/create-visitor-invitation.dto.js';
+import type { Prisma } from '../generated/prisma/client.js';
+
+const visitPassSelect = {
+  events: {
+    where: { type: { in: ['CHECK_IN', 'CHECK_OUT'] } },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: 2,
+    select: { type: true, createdAt: true },
+  },
+} satisfies Prisma.AccessPassSelect;
+
+function visitState(
+  pass: { events: { type: string; createdAt: Date }[] } | null | undefined,
+) {
+  const events = pass?.events ?? [];
+  const latest = events[0];
+  return {
+    visitStatus:
+      latest?.type === 'CHECK_IN'
+        ? 'CHECKED_IN'
+        : latest?.type === 'CHECK_OUT'
+          ? 'CHECKED_OUT'
+          : 'NOT_ARRIVED',
+    checkedInAt:
+      events.find((event) => event.type === 'CHECK_IN')?.createdAt ?? null,
+    checkedOutAt: latest?.type === 'CHECK_OUT' ? latest.createdAt : null,
+  };
+}
 
 const invitationSelect = {
   id: true,
@@ -114,7 +142,7 @@ export class VisitorInvitationsService {
             select: invitationSelect,
           });
           await this.passes.createForInvitation(tx, invitation);
-          return invitation;
+          return { ...invitation, ...visitState(null) };
         });
       } catch (error) {
         if (!(error instanceof PassCredentialCollision)) throw error;
@@ -127,11 +155,15 @@ export class VisitorInvitationsService {
 
   async findMine(currentUserId: string, estateId: string) {
     await this.resident(currentUserId, estateId);
-    return this.prisma.visitorInvitation.findMany({
+    const invitations = await this.prisma.visitorInvitation.findMany({
       where: this.mine(currentUserId, estateId),
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      select: invitationSelect,
+      select: { ...invitationSelect, pass: { select: visitPassSelect } },
     });
+    return invitations.map(({ pass, ...invitation }) => ({
+      ...invitation,
+      ...visitState(pass),
+    }));
   }
   async findOneMine(
     currentUserId: string,
@@ -141,11 +173,19 @@ export class VisitorInvitationsService {
     await this.resident(currentUserId, estateId);
     const invitation = await this.prisma.visitorInvitation.findFirst({
       where: this.mine(currentUserId, estateId, invitationId),
-      select: { ...invitationSelect, pass: { select: passSummarySelect } },
+      select: {
+        ...invitationSelect,
+        pass: { select: { ...passSummarySelect, ...visitPassSelect } },
+      },
     });
     if (!invitation)
       throw new NotFoundException('Visitor invitation not found');
-    return invitation;
+    const { events: _events, ...pass } = invitation.pass ?? {};
+    return {
+      ...invitation,
+      pass: invitation.pass ? pass : null,
+      ...visitState(invitation.pass),
+    };
   }
   async cancel(currentUserId: string, estateId: string, invitationId: string) {
     await this.findOneMine(currentUserId, estateId, invitationId);
@@ -171,10 +211,12 @@ export class VisitorInvitationsService {
         );
       }
       await this.passes.revokeForInvitation(tx, invitationId, new Date());
-      return tx.visitorInvitation.findFirstOrThrow({
-        where,
-        select: invitationSelect,
-      });
+      const { pass, ...invitation } =
+        await tx.visitorInvitation.findFirstOrThrow({
+          where,
+          select: { ...invitationSelect, pass: { select: visitPassSelect } },
+        });
+      return { ...invitation, ...visitState(pass) };
     });
   }
 }

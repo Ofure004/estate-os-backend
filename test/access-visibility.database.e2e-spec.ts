@@ -83,7 +83,7 @@ describe.skipIf(process.env.ACCESS_PASS_DATABASE_TEST !== '1')(
       app.useLogger(false);
       prisma = module.get(PrismaService);
       jwt = module.get(JwtService);
-      await app.init();
+      await app.listen(0, '127.0.0.1');
       for (let i = 0; i < 2; i++) {
         const org = await prisma.organization.create({
           data: { name: marker, slug: `${marker}-${i}` },
@@ -152,6 +152,121 @@ describe.skipIf(process.env.ACCESS_PASS_DATABASE_TEST !== '1')(
         data: [],
         meta: { page: 1, limit: 20, total: 0, totalPages: 0 },
       });
+    });
+    it('lists and filters expected, onsite and departed visitors without credentials', async () => {
+      const expected = await visit();
+      const onsite = await visit();
+      const departed = await visit();
+      await event(expected.pass!.id, 'DENIED', 1000);
+      await event(onsite.pass!.id, 'CHECK_IN', 1000);
+      await event(onsite.pass!.id, 'DENIED', 3000);
+      await event(departed.pass!.id, 'CHECK_IN', 1000);
+      await event(departed.pass!.id, 'CHECK_OUT', 2000);
+      await prisma.visitorInvitation.update({
+        where: { id: expected.id },
+        data: { validFrom: new Date('2030-01-01') },
+      });
+      await prisma.visitorInvitation.update({
+        where: { id: onsite.id },
+        data: { status: 'CANCELLED', validUntil: new Date(0) },
+      });
+      await prisma.accessPass.update({
+        where: { id: onsite.pass!.id },
+        data: { status: 'REVOKED' },
+      });
+      for (const [status, row] of [
+        ['expected', expected],
+        ['onsite', onsite],
+        ['departed', departed],
+      ] as const) {
+        const response = await get(`visitors?status=${status}`);
+        expect(response.status).toBe(200);
+        expect(response.body.data).toHaveLength(1);
+        expect(response.body.data[0]).toMatchObject({
+          invitationId: row.id,
+          status,
+          hostUnit: { name: 'Flat A' },
+        });
+        expect(JSON.stringify(response.body)).not.toContain(row.pass!.token);
+        expect(JSON.stringify(response.body)).not.toContain(row.pass!.code);
+      }
+      const all = await get('visitors');
+      expect(all.body.meta.total).toBe(3);
+      const out = all.body.data.find(
+        (row: { status: string }) => row.status === 'departed',
+      );
+      expect(out.checkedInAt).toBe(new Date(1000).toISOString());
+      expect(out.checkedOutAt).toBe(new Date(2000).toISOString());
+      const page = await get('visitors?limit=1&page=2');
+      expect(page.body.meta).toEqual({
+        page: 2,
+        limit: 1,
+        total: 3,
+        totalPages: 3,
+      });
+      expect(page.body.data[0]).toEqual(all.body.data[1]);
+      expect((await get('visitors?page=9')).body.data).toEqual([]);
+    });
+    it('excludes unusable unvisited invitations and inconsistent estate history', async () => {
+      for (const status of ['CANCELLED', 'EXPIRED', 'COMPLETED'] as const) {
+        const row = await visit();
+        await prisma.visitorInvitation.update({
+          where: { id: row.id },
+          data: { status },
+        });
+      }
+      for (const status of ['REVOKED', 'USED'] as const) {
+        const row = await visit();
+        await prisma.accessPass.update({
+          where: { id: row.pass!.id },
+          data: { status },
+        });
+      }
+      const expired = await visit();
+      await prisma.accessPass.update({
+        where: { id: expired.pass!.id },
+        data: { validUntil: new Date(1) },
+      });
+      const revoked = await visit();
+      await prisma.accessPass.update({
+        where: { id: revoked.pass!.id },
+        data: { revokedAt: new Date() },
+      });
+      const missing = await visit();
+      await prisma.accessPass.delete({ where: { id: missing.pass!.id } });
+      await visit(1);
+      await visit(0, 1);
+      const inconsistent = await visit();
+      await event(inconsistent.pass!.id, 'CHECK_IN', 1000);
+      await event(inconsistent.pass!.id, 'CHECK_OUT', 2000, 1, 1);
+      const wrongGate = await visit();
+      await event(wrongGate.pass!.id, 'CHECK_IN', 1000, 0, 1);
+      const response = await get('visitors');
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({
+        data: [],
+        meta: { page: 1, limit: 20, total: 0, totalPages: 0 },
+      });
+    });
+    it('uses the latest movement for reentry and tied timestamps', async () => {
+      const row = await visit();
+      await event(row.pass!.id, 'CHECK_IN', 1000, 0, 0, `${marker}-visitors-a`);
+      await event(
+        row.pass!.id,
+        'CHECK_OUT',
+        1000,
+        0,
+        0,
+        `${marker}-visitors-b`,
+      );
+      expect((await get('visitors?status=departed')).body.data).toHaveLength(1);
+      await event(row.pass!.id, 'CHECK_IN', 2000);
+      const response = await get('visitors?status=onsite');
+      expect(response.body.data[0]).toMatchObject({
+        checkedInAt: new Date(2000).toISOString(),
+        checkedOutAt: null,
+      });
+      expect((await get('visitors?status=departed')).body.data).toEqual([]);
     });
     it('derives latest presence including historical re-entry and ignores DENIED', async () => {
       const inside = await visit();

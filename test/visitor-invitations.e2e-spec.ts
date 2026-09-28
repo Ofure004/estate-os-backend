@@ -145,7 +145,7 @@ describe('Resident visitor invitations HTTP flow', () => {
       .compile();
     app = module.createNestApplication();
     jwt = module.get(JwtService);
-    await app.init();
+    await app.listen(0, '127.0.0.1');
   });
   beforeEach(() => {
     vi.clearAllMocks();
@@ -188,6 +188,9 @@ describe('Resident visitor invitations HTTP flow', () => {
     expect(response.status).toBe(201);
     expect(response.body).toMatchObject({
       status: 'PENDING',
+      visitStatus: 'NOT_ARRIVED',
+      checkedInAt: null,
+      checkedOutAt: null,
       visitorFirstName: 'Jane',
       visitorLastName: 'Doe',
       hostResidency: { id: 'r1' },
@@ -304,6 +307,93 @@ describe('Resident visitor invitations HTTP flow', () => {
   });
   it('views own detail', async () => {
     expect((await call('get', '/mine')).status).toBe(200);
+  });
+  it('returns NOT_ARRIVED for invitations without any visit events', async () => {
+    for (const suffix of ['', '/mine']) {
+      const response = await call('get', suffix);
+      const invitation = suffix ? response.body : response.body[0];
+      expect(invitation).toMatchObject({
+        visitStatus: 'NOT_ARRIVED',
+        checkedInAt: null,
+        checkedOutAt: null,
+      });
+    }
+  });
+  it.each(['PENDING', 'ACTIVE', 'CANCELLED', 'EXPIRED'])(
+    'shows CHECKED_IN independently of invitation status %s',
+    async (status) => {
+      const checkedInAt = new Date('2026-09-21T10:00:00Z');
+      invitations[0].status = status;
+      invitations[0].pass = {
+        code: 'demo',
+        status: 'ACTIVE',
+        events: [{ type: 'CHECK_IN', createdAt: checkedInAt }],
+      };
+      for (const suffix of ['', '/mine']) {
+        const response = await call('get', suffix);
+        expect(response.status).toBe(200);
+        const invitation = suffix ? response.body : response.body[0];
+        expect(invitation).toMatchObject({
+          status,
+          visitStatus: 'CHECKED_IN',
+          checkedInAt: checkedInAt.toISOString(),
+          checkedOutAt: null,
+        });
+        expect(invitation.pass?.events).toBeUndefined();
+        if (!suffix) expect(invitation.pass).toBeUndefined();
+        else expect(invitation.pass.code).toBe('demo');
+      }
+      expect(model.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({
+            pass: {
+              select: {
+                events: {
+                  where: { type: { in: ['CHECK_IN', 'CHECK_OUT'] } },
+                  orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+                  take: 2,
+                  select: { type: true, createdAt: true },
+                },
+              },
+            },
+          }),
+        }),
+      );
+    },
+  );
+  it('shows CHECKED_OUT and both timestamps after checkout', async () => {
+    const checkedInAt = new Date('2026-09-21T10:00:00Z');
+    const checkedOutAt = new Date('2026-09-21T11:00:00Z');
+    invitations[0].status = 'COMPLETED';
+    invitations[0].pass = {
+      events: [
+        { type: 'CHECK_OUT', createdAt: checkedOutAt },
+        { type: 'CHECK_IN', createdAt: checkedInAt },
+      ],
+    };
+    for (const suffix of ['', '/mine']) {
+      const response = await call('get', suffix);
+      const invitation = suffix ? response.body : response.body[0];
+      expect(invitation).toMatchObject({
+        status: 'COMPLETED',
+        visitStatus: 'CHECKED_OUT',
+        checkedInAt: checkedInAt.toISOString(),
+        checkedOutAt: checkedOutAt.toISOString(),
+      });
+    }
+  });
+  it('preserves checked-in presence in the cancellation response', async () => {
+    invitations[0].pass = {
+      events: [{ type: 'CHECK_IN', createdAt: new Date() }],
+    };
+    const response = await call('patch', '/mine/cancel');
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      status: 'CANCELLED',
+      visitStatus: 'CHECKED_IN',
+      checkedOutAt: null,
+    });
+    expect(response.body.pass).toBeUndefined();
   });
   it.each(['other', 'missing', 'cross-estate'])(
     'returns 404 for inaccessible invitation %s',
