@@ -37,11 +37,12 @@ model User {
   residencies      Residency[]
   staffAssignments StaffAssignment[]
 
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
-  visitorInvitations VisitorInvitation[]
-  accessEvents       AccessEvent[]
-  refreshSessions    RefreshSession[]
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  visitorInvitations  VisitorInvitation[]
+  accessEvents        AccessEvent[]
+  refreshSessions     RefreshSession[]
+  sentUserInvitations UserInvitation[]    @relation("InvitationInviter")
 }
 
 model RefreshSession {
@@ -61,9 +62,10 @@ model Organization {
   name String
   slug String @unique
 
-  memberships OrganizationMembership[]
-  clusters    Cluster[]
-  estates     Estate[]
+  memberships     OrganizationMembership[]
+  clusters        Cluster[]
+  estates         Estate[]
+  userInvitations UserInvitation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -127,6 +129,7 @@ model Estate {
   gates              Gate[]
   visitorInvitations VisitorInvitation[]
   accessEvents       AccessEvent[]
+  userInvitations    UserInvitation[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -178,8 +181,9 @@ model Unit {
   type   UnitType?
   status UnitStatus @default(ACTIVE)
 
-  estate      Estate      @relation(fields: [estateId], references: [id], onDelete: Cascade)
-  residencies Residency[]
+  estate          Estate           @relation(fields: [estateId], references: [id], onDelete: Cascade)
+  residencies     Residency[]
+  userInvitations UserInvitation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -236,6 +240,44 @@ enum StaffAssignmentStatus {
   ACTIVE
   SUSPENDED
   ENDED
+}
+
+enum UserInvitationType {
+  RESIDENT
+  STAFF
+}
+
+enum UserInvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+}
+
+model UserInvitation {
+  id              String               @id @default(cuid())
+  email           String
+  tokenHash       String               @unique
+  organizationId  String
+  estateId        String
+  type            UserInvitationType
+  intendedRole    StaffRole?
+  unitId          String?
+  residencyType   ResidencyType?
+  invitedByUserId String
+  status          UserInvitationStatus @default(PENDING)
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  estate       Estate       @relation(fields: [estateId], references: [id], onDelete: Cascade)
+  unit         Unit?        @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("InvitationInviter", fields: [invitedByUserId], references: [id])
+
+  @@index([estateId, status, createdAt])
+  @@index([email, status])
 }
 
 model Gate {

@@ -328,6 +328,53 @@ A guard check alone does not automatically filter later Prisma queries or enforc
 resident ownership of individual units/invitations; business actions must add
 those action-specific rules when implemented.
 
+## Onboarding and user provisioning
+
+An invitation defines the recipient's estate, unit or staff role. The recipient
+controls only their account details and password. There is no public signup.
+Apply `20260928120000_user_onboarding_invitations` and regenerate Prisma Client
+before starting the updated service.
+
+| Method | Route | Authorization | Body |
+| --- | --- | --- | --- |
+| POST | `/estates/:estateId/onboarding/resident-invitations` | Estate manager or organization admin/owner | `email`, `unitId`, `residencyType` |
+| POST | `/estates/:estateId/onboarding/staff-invitations` | Estate manager, security supervisor, or organization admin/owner | `email`, `role` |
+| GET | `/estates/:estateId/onboarding/invitations` | Estate manager or organization admin/owner | None |
+| POST | `/estates/:estateId/onboarding/invitations/:invitationId/revoke` | Role authorized for the invitation | None |
+| GET | `/onboarding/invitations/:token` | Invitation token | None |
+| POST | `/onboarding/invitations/:token/accept` | Invitation token; JWT required for existing users | New user: `firstName`, `lastName`, `password`; existing user: `{}` |
+
+Use `Authorization: Bearer <accessToken>` for administrator routes. A security
+supervisor may invite or revoke only `GUARD` staff. An estate manager may assign
+`GUARD`, `SECURITY_SUPERVISOR`, and `FACILITY_MANAGER`; organization admins and
+owners may assign `ESTATE_MANAGER` too. Recipient bodies cannot set email,
+estate, organization, unit, role, relationship IDs, or status.
+
+Invitations start `PENDING` and move to `ACCEPTED` or `REVOKED`. An unaccepted
+invitation becomes unusable when `expiresAt` passes; `EXPIRED` is an effective
+listing status, not a stored status. The default lifetime is 72 hours. Set
+`ONBOARDING_INVITATION_HOURS` to an integer from 1 to 720 to change it.
+Duplicate active relationships and live pending invitations return `409` with
+business codes. An expired pending invitation can be replaced; its old record
+is marked revoked. Lookup and acceptance of expired invitations return
+`INVITATION_EXPIRED`. Acceptance uses a database transaction and locks the
+invitation, so a replay cannot create another relationship.
+
+Invitation creation returns `inviteToken` only when `NODE_ENV` is not
+`production`. Pass that URL-safe token to the recipient in development, for
+example `/onboarding/invitations/<inviteToken>` on the frontend. Only a SHA-256
+hash is stored. No email provider is integrated yet, so production delivery
+must be connected before invitations can reach recipients. Never log the token
+or put it in analytics. Acceptance creates a new user with an Argon2id password
+hash or requires the existing user to authenticate with the matching email. It
+creates an active residency or staff assignment atomically; the recipient then
+uses `/auth/login`. Existing architecture does not require an organization
+membership for resident or staff relationships, so onboarding follows that
+rule.
+
+Run the isolated PostgreSQL suite with
+`RUN_ONBOARDING_DATABASE_TESTS=1 npm run test:e2e -- test/onboarding.database.e2e-spec.ts`.
+
 ## Resident visitor invitations
 
 All four endpoints require JWT authentication and an active residency in the
